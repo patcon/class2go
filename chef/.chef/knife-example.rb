@@ -8,7 +8,7 @@ validation_key           "#{current_dir}/class2go-validator.pem"
 chef_server_url          "https://api.opscode.com/organizations/class2go"
 cache_type               'BasicFile'
 cache_options( :path => "#{ENV['HOME']}/.chef/checksums" )
-cookbook_path            ["#{current_dir}/../cookbooks"]
+cookbook_path            ["#{current_dir}/../cookbooks", "#{current_dir}/../cookbooks-class2go"]
 
 knife[:aws_ssh_key_id] = "c2g-stag-20120619"
 knife[:aws_access_key_id]     = "AKIAIYES3HTY3TOMHCTQ"
