@@ -1,8 +1,8 @@
 #
 # Author:: Joshua Timberman (<joshua@opscode.com>)
 # Author:: Seth Chisamore (<schisamo@opscode.com>)
-# Cookbook Name:: chef
-# Recipe:: bootstrap_client
+# Cookbook Name:: chef-client
+# Recipe:: service
 #
 # Copyright 2009-2011, Opscode, Inc.
 #
@@ -19,43 +19,61 @@
 # limitations under the License.
 #
 
-root_group = value_for_platform(
-  ["openbsd", "freebsd", "mac_os_x", "mac_os_x_server"] => { "default" => "wheel" },
+class ::Chef::Recipe
+  include ::Opscode::ChefClient::Helpers
+end
+
+require 'chef/version_constraint'
+require 'chef/exceptions'
+
+root_group = value_for_platform_family(
+  ["openbsd", "freebsd", "mac_os_x"] => "wheel",
   "default" => "root"
 )
 
+if node["platform"] == "windows"
+    existence_check = :exists?
+# Where will also return files that have extensions matching PATHEXT (e.g.
+# *.bat). We don't want the batch file wrapper, but the actual script.
+    which = 'set PATHEXT=.exe & where'
+    Chef::Log.debug "Using exists? and 'where', since we're on Windows"
+else
+    existence_check = :executable?
+    which = 'which'
+    Chef::Log.debug "Using executable? and 'which' since we're on Linux"
+end
+
 # COOK-635 account for alternate gem paths
 # try to use the bin provided by the node attribute
-if ::File.executable?(node["chef_client"]["bin"])
+if ::File.send(existence_check, node["chef_client"]["bin"])
   client_bin = node["chef_client"]["bin"]
+  Chef::Log.debug "Using chef-client bin from node attributes: #{client_bin}"
 # search for the bin in some sane paths
-elsif Chef::Client.const_defined?('SANE_PATHS') && (chef_in_sane_path=Chef::Client::SANE_PATHS.map{|p| p="#{p}/chef-client";p if ::File.executable?(p)}.compact.first) && chef_in_sane_path
+elsif Chef::Client.const_defined?('SANE_PATHS') && (chef_in_sane_path=Chef::Client::SANE_PATHS.map{|p| p="#{p}/chef-client";p if ::File.send(existence_check, p)}.compact.first) && chef_in_sane_path
   client_bin = chef_in_sane_path
+  Chef::Log.debug "Using chef-client bin from sane path: #{client_bin}"
 # last ditch search for a bin in PATH
-elsif (chef_in_path=%x{which chef-client}.chomp) && ::File.executable?(chef_in_path)
+elsif (chef_in_path=%x{#{which} chef-client}.chomp) && ::File.send(existence_check, chef_in_path)
   client_bin = chef_in_path
+  Chef::Log.debug "Using chef-client bin from system path: #{client_bin}"
 else
   raise "Could not locate the chef-client bin in any known path. Please set the proper path by overriding node['chef_client']['bin'] in a role."
 end
 
-%w{run_path cache_path backup_path log_dir}.each do |key|
-  directory node["chef_client"][key] do
-    recursive true
-    # Work-around for CHEF-2633
-    unless node["platform"] == "windows"
-      owner "root"
-      group root_group
-    end
-    mode 0755
-  end
-end
+node.set["chef_client"]["bin"] = client_bin
+
+# libraries/helpers.rb method to DRY directory creation resources
+create_directories
 
 case node["chef_client"]["init_style"]
 when "init"
 
-  dist_dir, conf_dir = value_for_platform(
-    ["ubuntu", "debian"] => { "default" => ["debian", "default"] },
-    ["redhat", "centos", "fedora", "scientific", "amazon"] => { "default" => ["redhat", "sysconfig"]}
+  #argh?
+  dist_dir, conf_dir = value_for_platform_family(
+    ["debian"] => ["debian", "default"],
+    ["fedora"] => ["redhat", "sysconfig"],
+    ["rhel"] => ["redhat", "sysconfig"],
+    ["suse"] => ["suse", "sysconfig"]
   )
 
   template "/etc/init.d/chef-client" do
@@ -79,29 +97,37 @@ when "init"
   end
 
 when "smf"
+  directory node['chef_client']['method_dir'] do
+    action :create
+    owner "root"
+    group "bin"
+    mode "0644"
+    recursive true
+  end
+
   local_path = ::File.join(Chef::Config[:file_cache_path], "/")
-  template "/lib/svc/method/chef-client" do
+  template "#{node['chef_client']['method_dir']}/chef-client" do
     source "solaris/chef-client.erb"
     owner "root"
     group "root"
     mode "0777"
     notifies :restart, "service[chef-client]"
   end
-  
-  template (local_path + "chef-client.xml") do
+
+  template(local_path + "chef-client.xml") do
     source "solaris/manifest.xml.erb"
     owner "root"
     group "root"
     mode "0644"
     notifies :run, "execute[load chef-client manifest]", :immediately
   end
-  
+
   execute "load chef-client manifest" do
     action :nothing
     command "svccfg import #{local_path}chef-client.xml"
     notifies :restart, "service[chef-client]"
   end
-  
+
   service "chef-client" do
     action [:enable, :start]
     provider Chef::Provider::Service::Solaris
@@ -109,14 +135,14 @@ when "smf"
 
 when "upstart"
 
+  upstart_job_dir = "/etc/init"
+  upstart_job_suffix = ".conf"
+
   case node["platform"]
   when "ubuntu"
     if (8.04..9.04).include?(node["platform_version"].to_f)
       upstart_job_dir = "/etc/event.d"
       upstart_job_suffix = ""
-    else
-      upstart_job_dir = "/etc/init"
-      upstart_job_suffix = ".conf"
     end
   end
 
@@ -232,6 +258,30 @@ when "winsw"
 
   service "chef-client" do
     action :start
+  end
+
+when "launchd"
+
+  version_checker = Chef::VersionConstraint.new(">= 0.10.10")
+  mac_service_supported = version_checker.include?(node['chef_packages']['chef']['version'])
+
+  if mac_service_supported
+    template "/Library/LaunchDaemons/com.opscode.chef-client.plist" do
+      source "com.opscode.chef-client.plist.erb"
+      mode 0644
+      variables(
+        :launchd_mode => node["chef_client"]["launchd_mode"],
+        :client_bin => client_bin
+      )
+    end
+
+    service "chef-client" do
+      service_name "com.opscode.chef-client"
+      provider Chef::Provider::Service::Macosx
+      action :start
+    end
+  else
+    log("Mac OS X Service provider is only supported in Chef >= 0.10.10") { level :warn }
   end
 
 when "bsd"

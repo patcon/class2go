@@ -3,7 +3,7 @@
 # Author:: Seth Chisamore (<schisamo@opscode.com>)
 # Author:: Bryan Berry (<bryan.berry@gmail.com>)
 # Cookbook Name:: chef-client
-# Recipe:: cron 
+# Recipe:: cron
 #
 # Copyright 2009-2011, Opscode, Inc.
 #
@@ -20,64 +20,76 @@
 # limitations under the License.
 #
 
-root_group = value_for_platform(
-                                ["openbsd", "freebsd", "mac_os_x"] => { "default" => "wheel" },
-                                "default" => "root"
-                                )
+require "digest/md5"
+
+class ::Chef::Recipe
+  include ::Opscode::ChefClient::Helpers
+end
 
 # COOK-635 account for alternate gem paths
 # try to use the bin provided by the node attribute
 if ::File.executable?(node["chef_client"]["bin"])
   client_bin = node["chef_client"]["bin"]
   # search for the bin in some sane paths
-elsif (chef_in_sane_path=Chef::Client::SANE_PATHS.map{|p| p="#{p}/chef-client";p if ::File.executable?(p)}.compact.first) && chef_in_sane_path
+elsif Chef::Client.const_defined?('SANE_PATHS') && (chef_in_sane_path=Chef::Client::SANE_PATHS.map{|p| p="#{p}/chef-client";p if ::File.executable?(p)}.compact.first) && chef_in_sane_path
   client_bin = chef_in_sane_path
   # last ditch search for a bin in PATH
-elsif (chef_in_path=%x{which chef-client}.chomp) && ::File.executable?(chef_in_path)
+elsif (chef_in_path=%x{which chef_client}.chomp) && ::File.executable?(chef_in_path)
   client_bin = chef_in_path
 else
   raise "Could not locate the chef-client bin in any known path. Please set the proper path by overriding node['chef_client']['bin'] in a role."
 end
 
-%w{run_path cache_path backup_path log_dir}.each do |key|
-  directory node["chef_client"][key] do
-    recursive true
-    owner "root"
-    group root_group
-    mode 0755
-  end
-end
+# libraries/helpers.rb method to DRY directory creation resources
+create_directories
 
-dist_dir, conf_dir = value_for_platform(
-                                        ["ubuntu", "debian"] => { "default" => ["debian", "default"] },
-                                        ["redhat", "centos", "fedora", "scientific", "amazon"] => { "default" => ["redhat", "sysconfig"]}
+dist_dir, conf_dir = value_for_platform_family(
+                                        ["debian"] => ["debian", "default"],
+                                        ["rhel"] => ["redhat", "sysconfig"]
                                         )
 
 # let's create the service file so the :disable action doesn't fail
-template "/etc/init.d/chef-client" do
-  source "#{dist_dir}/init.d/chef-client.erb"
-  mode 0755
-  variables(
-            :client_bin => client_bin
-            )
-end
+case node['platform_family']
+when "arch","debian","rhel","fedora","suse","openbsd","freebsd"
+  template "/etc/init.d/chef-client" do
+    source "#{dist_dir}/init.d/chef-client.erb"
+    mode 0755
+    variables(
+              :client_bin => client_bin
+              )
+  end
 
-template "/etc/#{conf_dir}/chef-client" do
-  source "#{dist_dir}/#{conf_dir}/chef-client.erb"
-  mode 0644
-end
+  template "/etc/#{conf_dir}/chef-client" do
+    source "#{dist_dir}/#{conf_dir}/chef-client.erb"
+    mode 0644
+  end
 
-service "chef-client" do
-  supports :status => true, :restart => true
-  action [:disable, :stop]
+  service "chef-client" do
+    supports :status => true, :restart => true
+    action [:disable, :stop]
+  end
+
+when "openindiana","opensolaris","nexentacore","solaris2","smartos"
+  service "chef-client" do
+    supports :status => true, :restart => true
+    action [:disable, :stop]
+    provider Chef::Provider::Service::Solaris
+    ignore_failure true
+  end
 end
 
 cron "chef-client" do
-  minute node['chef_client']['cron']['minute']	
-  hour	node['chef_client']['cron']['hour']
-  user	"root"
-  shell	"/bin/bash"
-  command "/bin/sleep `/usr/bin/expr $RANDOM \\% 90` &> /dev/null ; #{client_bin} &> /dev/null "
+  minute  node['chef_client']['cron']['minute']
+  hour    node['chef_client']['cron']['hour']
+  path    node['chef_client']['cron']['path'] if node['chef_client']['cron']['path']
+  user    "root"
+  shell   "/bin/bash"
+
+  # Generate a uniformly distributed unique number to sleep.
+  checksum = Digest::MD5.hexdigest "#{node['fqdn'] or 'unknown-hostname'}"
+  sleep_time = checksum.to_s.hex % node['chef_client']['splay'].to_i
+  env = node['chef_client']['cron']['environment_variables']
+  log_file = node["chef_client"]["cron"]["log_file"]
+
+  command "/bin/sleep #{sleep_time}; #{env} #{client_bin} &> #{log_file}"
 end
-
-

@@ -1,10 +1,21 @@
-log_level        :info
-log_location     STDOUT
+<% unless @chef_requires.empty? %>
+<%= @chef_requires.inspect %>.each do |lib|
+  begin
+    require lib
+  rescue LoadError
+    Chef::Log.warn "Failed to load #{lib}. This should be resolved after a chef run."
+  end
+end
+<% end %>
 
-<% if Chef::Config.has_key?(:chef_server_url) -%>
-chef_server_url  "<%= Chef::Config[:chef_server_url] %>"
-<% else -%>
+log_level        :<%= @chef_log_level.to_s %>
+log_location     <%= @chef_log_location %>
+verbose_logging <%= @chef_verbose_logging %>
+
+<% if node.attribute?("chef_client") && node["chef_client"]["server_url"] -%>
 chef_server_url  "<%= node["chef_client"]["server_url"] %>"
+<% else -%>
+chef_server_url  "<%= Chef::Config[:chef_server_url] %>"
 <% end -%>
 validation_client_name "<%= node["chef_client"]["validation_client_name"] %>"
 <% if @chef_node_name -%>
@@ -15,6 +26,7 @@ node_name "<%= @chef_node_name %>"
 
 file_backup_path   "<%= node["chef_client"]["backup_path"] %>"
 file_cache_path    "<%= node["chef_client"]["cache_path"] %>"
+cache_options({ :path => "<%= node["chef_client"]["checksum_cache_path"] %>", :skip_expires => <%= node["chef_client"]["checksum_cache_skip_expires"] %> })
 <% unless %w{ runit bluepill daemontools }.include?(node["chef_client"]["init_style"]) -%>
 
 pid_file           "<%= node["chef_client"]["run_path"] %>/client.pid"
@@ -34,3 +46,19 @@ ENV['HTTP_PROXY'] = "<%= node["chef_client"]["http_proxy"] %>"
 
 Ohai::Config[:plugin_path] << "<%= node["ohai"]["plugin_path"] %>"
 <% end -%>
+
+<% if @chef_environment %>
+environment "<%= @chef_environment %>"
+<% end %>  
+
+<% unless @chef_report_handlers.empty? %>
+  <% @chef_report_handlers.each do |handler| %>
+    report_handlers << <%= handler["class"] %>.new(<%= handler["arguments"].join(',') %>)
+  <% end %>
+<% end %>
+
+<% unless @chef_exception_handlers.empty? %>
+  <% @chef_exception_handlers.each do |handler| %>
+    exception_handlers << <%= handler["class"] %>.new(<%= handler["arguments"].join(',') %>)
+  <% end %>
+<% end %>

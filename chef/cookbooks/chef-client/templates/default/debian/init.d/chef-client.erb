@@ -20,7 +20,7 @@ NAME=chef-client
 DESC=chef-client
 PIDFILE=<%= node["chef_client"]["run_path"] %>/client.pid
 
-test -x $DAEMON || exit 0
+test -x $DAEMON || exit 1
 
 . /lib/lsb/init-functions
 
@@ -30,7 +30,7 @@ if [ ! -d /var/run/chef ]; then
   mkdir /var/run/chef
 fi
 
-DAEMON_OPTS="-d -P $PIDFILE -L $LOGFILE -c $CONFIG -i $INTERVAL -s $SPLAY"
+DAEMON_OPTS="-d -P $PIDFILE -L $LOGFILE -c $CONFIG -i $INTERVAL -s $SPLAY <%= node["chef_client"]["daemon_options"].join(' ') %>"
 
 running_pid() {
   pid=$1
