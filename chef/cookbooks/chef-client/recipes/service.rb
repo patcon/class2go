@@ -55,8 +55,7 @@ when "init"
 
   dist_dir, conf_dir = value_for_platform(
     ["ubuntu", "debian"] => { "default" => ["debian", "default"] },
-    ["redhat", "centos", "fedora", "scientific", "amazon"] => { "default" => ["redhat", "sysconfig"]},
-    ["suse"] => { "default" => ["suse", "sysconfig"] }
+    ["redhat", "centos", "fedora", "scientific", "amazon"] => { "default" => ["redhat", "sysconfig"]}
   )
 
   template "/etc/init.d/chef-client" do

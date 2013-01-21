@@ -3,5 +3,5 @@
 
 site 'http://community.opscode.com/api/v1'
 
-cookbook 'chef-client', '= 1.1.4'
-cookbook 'git', '= 1.0.0'
+cookbook 'chef-client'
+cookbook 'git'

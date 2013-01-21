@@ -1,0 +1,16 @@
+SITE
+  remote: http://community.opscode.com/api/v1
+  specs:
+    chef-client (1.1.4)
+    dmg (1.1.0)
+    git (1.0.0)
+      dmg (>= 0.0.0)
+      runit (>= 0.0.0)
+      yum (>= 0.0.0)
+    runit (0.16.2)
+    yum (2.1.0)
+
+DEPENDENCIES
+  chef-client (>= 0)
+  git (>= 0)
+
